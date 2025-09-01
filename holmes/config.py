@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, FilePath, SecretStr
 
 
 from holmes.clients.robusta_client import fetch_robusta_models
-from holmes.core.llm import DefaultLLM
+from holmes.core.llm import DefaultLLM, GenAIHubLLM
 from holmes.common.env_vars import (
     ROBUSTA_AI,
     LOAD_ALL_ROBUSTA_MODELS,
@@ -535,7 +535,8 @@ class Config(RobustaBaseConfig):
                 api_key = model_params.pop("api_key", api_key)
             model = model_params.pop("model", model)
 
-        return DefaultLLM(model, api_key, model_params, tracer)  # type: ignore
+        return GenAIHubLLM(model, api_key, model_params, tracer)  #Override with GenAIHubLLM
+        # return DefaultLLM(model, api_key, model_params, tracer)  # type: ignore
 
     def get_models_list(self) -> List[str]:
         if self._model_list:
