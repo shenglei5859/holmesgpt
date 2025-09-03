@@ -26,6 +26,8 @@ def environ_get_safe_int(env_var, default="0"):
 OVERRIDE_MAX_OUTPUT_TOKEN = environ_get_safe_int("OVERRIDE_MAX_OUTPUT_TOKEN")
 OVERRIDE_MAX_CONTENT_SIZE = environ_get_safe_int("OVERRIDE_MAX_CONTENT_SIZE")
 
+GPT_4O_MAX_INPUT=128000
+GPT_4O_MAX_OUTPUT=16384
 
 class LLM:
     @abstractmethod
@@ -326,10 +328,11 @@ class DefaultLLM(LLM):
                     f"Added cache_control to {target_msg.get('role')} message (structured content)"
                 )
 
-class GenAIHubLLM(LLM):
+class GenAIHubLLM(DefaultLLM):
     """
-    SAP gen_ai_hub LLM adapter using OpenAI chat completions API
-    Full equivalence with DefaultLLM
+    SAP gen_ai_hub LLM adapter inheriting from DefaultLLM
+    Reuses token counting, context window logic, and other utilities
+    Only overrides completion method and GenAI Hub specific configurations
     """
 
     def __init__(
@@ -339,91 +342,27 @@ class GenAIHubLLM(LLM):
         args: Optional[Dict] = None,
         tracer=None,
     ):
+        # Initialize basic attributes without calling parent's __init__
+        # to avoid DefaultLLM's check_llm validation
         self.model = model
         self.api_key = api_key
         self.args = args or {}
         self.tracer = tracer
 
-        if not self.args:
-            self.check_llm(self.model, self.api_key)
+        # Use GenAI Hub specific validation instead of DefaultLLM's
+        self.check_llm(self.model, self.api_key)
 
     def check_llm(self, model: str, api_key: Optional[str]):
-        """Check gen_ai_hub model availability"""
-        logging.debug(f"Checking GenAIHub model {model}")
-        # Add gen_ai_hub specific validation if needed
-        # Could test a simple completion call here
+        """GenAI Hub specific model validation"""
+        logging.debug(f"Pass LLM Check for GenAI Hub")
         pass
 
-    def _strip_model_prefix(self) -> str:
-        """Strip model prefix for cost lookup compatibility"""
-        model_name = self.model
-        prefixes = ["meta--", "openai--", "anthropic--"]
-
-        for prefix in prefixes:
-            if model_name.startswith(prefix):
-                return model_name[len(prefix):]
-        return model_name
-
+    # Use GPT_4O for temporary use, TODO: replace with actual model context window sizes
     def get_context_window_size(self) -> int:
-        """Get context window based on model"""
-        model_configs = {
-            "gpt-4o": 128000,
-            "gpt-4o-mini": 128000,
-        }
-
-        stripped_model = self._strip_model_prefix()
-        return model_configs.get(stripped_model, 128000)
+        return GPT_4O_MAX_INPUT
 
     def get_maximum_output_token(self) -> int:
-        """Get max output tokens based on model"""
-        model_configs = {
-            "gpt-4o": 16384,
-            "gpt-4o-mini": 16384,
-        }
-
-        stripped_model = self._strip_model_prefix()
-        return model_configs.get(stripped_model, 4096)
-
-    def count_tokens_for_message(self, messages: List[Dict]) -> int:
-        """Count tokens with caching like DefaultLLM"""
-        total_token_count = 0
-
-        for message in messages:
-            if "token_count" in message and message["token_count"]:
-                total_token_count += message["token_count"]
-            else:
-                if "content" in message:
-                    content = message["content"]
-                    if isinstance(content, str):
-                        token_count = self._estimate_tokens(content)
-                    elif isinstance(content, list):
-                        token_count = self._estimate_tokens(json.dumps(content))
-                    elif isinstance(content, dict):
-                        if "type" not in content:
-                            token_count = self._estimate_tokens(json.dumps(content))
-                        else:
-                            token_count = self._estimate_tokens(str(content))
-                    else:
-                        token_count = self._estimate_tokens(str(content))
-
-                    message["token_count"] = token_count
-                    total_token_count += token_count
-
-        return total_token_count
-
-    def _estimate_tokens(self, text: str) -> int:
-        """Estimate tokens - replace with actual tokenizer for production"""
-        import re
-
-        # More accurate estimation for different model types
-        words = len(re.findall(r'\b\w+\b', text))
-        punctuation = len(re.findall(r'[^\w\s]', text))
-
-        # Different ratios for different model families
-        if "gpt" in self.model.lower():
-            return int(words * 1.2 + punctuation * 0.3)
-        else:
-            return max(len(text) // 4, words)
+        return GPT_4O_MAX_OUTPUT
 
     def completion(
         self,
@@ -436,11 +375,11 @@ class GenAIHubLLM(LLM):
         stream: Optional[bool] = None,
     ) -> ModelResponse:
         """
-        Complete chat using gen_ai_hub OpenAI chat API
-        Full compatibility with DefaultLLM
+        Override completion to use GenAI Hub instead of litellm
+        All other functionality (token counting, caching, etc.) inherited from DefaultLLM
         """
 
-        # Build completion arguments
+        # Build completion arguments for GenAI Hub
         kwargs = {
             "model_name": self.model,
             "messages": messages,
@@ -470,7 +409,7 @@ class GenAIHubLLM(LLM):
             # Use gen_ai_hub chat completions (OpenAI compatible)
             response = chat.completions.create(**kwargs)
 
-            # Add cost information for compatibility
+            # Add cost information for compatibility with DefaultLLM
             if hasattr(response, '_hidden_params'):
                 response._hidden_params = {"response_cost": 0.0}
             else:
