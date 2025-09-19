@@ -26,9 +26,6 @@ def environ_get_safe_int(env_var, default="0"):
 OVERRIDE_MAX_OUTPUT_TOKEN = environ_get_safe_int("OVERRIDE_MAX_OUTPUT_TOKEN")
 OVERRIDE_MAX_CONTENT_SIZE = environ_get_safe_int("OVERRIDE_MAX_CONTENT_SIZE")
 
-GPT_4O_MAX_INPUT=128000
-GPT_4O_MAX_OUTPUT=16384
-
 class LLM:
     @abstractmethod
     def __init__(self):
@@ -247,7 +244,7 @@ class DefaultLLM(LLM):
             **tools_args,
             **self.args,
         )
-
+        print(result)
         if isinstance(result, ModelResponse):
             return result
         elif isinstance(result, CustomStreamWrapper):
@@ -342,28 +339,50 @@ class GenAIHubLLM(DefaultLLM):
         args: Optional[Dict] = None,
         tracer=None,
     ):
-        # Initialize basic attributes without calling parent's __init__
-        # to avoid DefaultLLM's check_llm validation
-        self.model = model
+        # GenAI Hub specific model configurations
+        model_config = {
+            "d0ad7c1fe79bcb15": {
+                "model": "gpt-5",
+                "provider": "OpenAI",
+                "contextLength": 272000,
+                "cost": [{"inputCost": "0.00091"}, {"outputCost": "0.00677"}]
+            },
+            "d7798b66021df731": {
+                "model": "gpt-5-mini",
+                "provider": "OpenAI",
+                "contextLength": 272000,
+                "cost": [{"inputCost": "0.00024"}, {"outputCost": "0.00141"}]
+            },
+            "d02fb5127194087a": {
+                "model": "gpt-4o",
+                "provider": "OpenAI",
+                "contextLength": 128000,
+                "cost": [{"inputCost": "0.00159"}, {"outputCost": "0.00616"}]
+            }
+        }
+
         self.api_key = api_key
         self.args = args or {}
         self.tracer = tracer
 
-        # Use GenAI Hub specific validation instead of DefaultLLM's
+        deploy_id = os.environ.get("DEPLOY_ID")
+        if deploy_id and deploy_id in model_config:
+            self.model_config = model_config[deploy_id]
+            self.model = self.model_config["model"]
+            self.context_length = self.model_config["contextLength"]
+            self.provider = self.model_config["provider"]
+            self.cost_config = self.model_config["cost"]
+        else:
+            raise ValueError(f"Invalid or missing DEPLOY_ID: {deploy_id}")
+        
+        logging.info(f"Using GenAI Hub model {self.model} with context length {self.context_length}")
         self.check_llm(self.model, self.api_key)
 
     def check_llm(self, model: str, api_key: Optional[str]):
         """GenAI Hub specific model validation"""
         logging.debug(f"Pass LLM Check for GenAI Hub")
         pass
-
-    # Use GPT_4O for temporary use, TODO: replace with actual model context window sizes
-    def get_context_window_size(self) -> int:
-        return GPT_4O_MAX_INPUT
-
-    def get_maximum_output_token(self) -> int:
-        return GPT_4O_MAX_OUTPUT
-
+    
     def completion(
         self,
         messages: List[Dict[str, Any]],
@@ -389,41 +408,27 @@ class GenAIHubLLM(DefaultLLM):
         if tools and len(tools) > 0 and tool_choice == "auto":
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
-
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-
+        # Deprecated in GPT5 cause it is auto-switching
+        # if temperature is not None:
+        #     kwargs["temperature"] = temperature
         if response_format:
             kwargs["response_format"] = response_format
-
         if stream is not None:
             kwargs["stream"] = stream
-
-        # Add max_tokens
-        kwargs["max_tokens"] = self.get_maximum_output_token()
+        
+        # Disabled in GPT5, wait for openai to support it
+        # kwargs["max_completion_tokens"] = self.get_maximum_output_token()
 
         # Merge additional args
         kwargs.update(self.args)
 
-        try:
-            # Use gen_ai_hub chat completions (OpenAI compatible)
-            response = chat.completions.create(**kwargs)
-
-            # Add cost information for compatibility with DefaultLLM
-            if hasattr(response, '_hidden_params'):
-                response._hidden_params = {"response_cost": 0.0}
-            else:
-                setattr(response, '_hidden_params', {"response_cost": 0.0})
-
-            return response
-
-        except Exception as e:
-            # Handle known errors similar to DefaultLLM
-            if "tool_choice, tools" in str(e):
-                raise Exception(
-                    "The model you chose does not support tool calling. "
-                    "Tool calling requires compatible models."
-                )
-            else:
-                logging.error(f"GenAIHub completion failed: {e}")
-                raise Exception(f"GenAIHub completion failed: {str(e)}")
+        # Use gen_ai_hub chat completions (OpenAI compatible)
+        result = chat.completions.create(**kwargs)
+        if isinstance(result, ModelResponse):
+            return result
+        elif isinstance(result, CustomStreamWrapper):
+            return result
+        else:
+            return result
+            raise Exception(f"Unexpected type returned by the LLM {type(result)}")
+        
