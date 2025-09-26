@@ -1,7 +1,7 @@
 # DNS Troubleshooting Guidelines (Kubernetes)
 
 ## Goal
-Your primary goal when using these tools is to diagnose DNS resolution issues within a Kubernetes cluster, focusing on identifying common problems like incorrect CoreDNS/kube-dns setup, network policies, or service discovery failures by strictly following the workflow for DNS diagnosis.
+Your primary goal when using these tools is to diagnose ingress resolution issues within a Kubernetes cluster, focusing on identifying common problems like ip whitelist and issues like being forbidden CoreDNS/kube-dns setup, network policies, or service discovery failures by strictly following the workflow for DNS diagnosis.
 
 *   Use the tools to gather information about the DNS pods, services, and configuration.
 *   Clearly present the key findings from the tool outputs in your analysis.
