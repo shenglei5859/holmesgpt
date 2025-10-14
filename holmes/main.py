@@ -941,6 +941,48 @@ def opsgenie(
             )
 
 
+@generate_app.command()
+def runbook(
+    rca_file: Path = typer.Option(..., "--from-rca", help="Path to RCA markdown file"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output runbook file path"),
+    api_key: Optional[str] = opt_api_key,
+    model: Optional[str] = opt_model,
+    config_file: Optional[Path] = opt_config_file,
+    verbose: Optional[List[bool]] = opt_verbose,
+):
+    """
+    Generate a runbook from an RCA document
+    """
+    console = init_logging(verbose)
+    
+    if not rca_file.exists():
+        console.print(f"[bold red]Error: RCA file not found: {rca_file}[/bold red]")
+        raise typer.Exit(1)
+    
+    config = Config.load_from_file(config_file, api_key=api_key, model=model)
+    
+    console.print(f"[bold yellow]Loading RCA from {rca_file}...[/bold yellow]")
+    rca_content = rca_file.read_text(encoding="utf-8")
+    
+    console.print("[bold yellow]Generating runbook...[/bold yellow]")
+    prompt = load_and_render_prompt(
+        "builtin://rca_to_runbook_transformer.jinja2",
+        {"rca_content": rca_content}
+    )
+    
+    # Use the LLM to generate runbook
+    llm = config._get_llm(model)
+    messages = [{"role": "user", "content": prompt}]
+    response = llm.completion(messages, drop_params=True, stream=True)
+    runbook_content = ""
+    for chunk in response:
+        if chunk.choices[0].delta.content:
+            content = chunk.choices[0].delta.content
+            runbook_content += content
+            console.print(content, end="")
+    console.print()
+    
+
 @toolset_app.command("list")
 def list_toolsets(
     verbose: Optional[List[bool]] = opt_verbose,

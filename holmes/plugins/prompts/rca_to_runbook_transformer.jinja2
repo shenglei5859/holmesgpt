@@ -1,0 +1,62 @@
+# RCA → Diagnostic Runbook Template
+
+Generate a concise runbook focused on *where and how to investigate*, not *why it failed*.
+**Rules**
+- Always cite RCA sources `[Source: "<quote>"]`
+- Must avoid embedding root cause or fix details to keep it investigation-focused
+- Must focus on “where to look” and “how to tell”
+- Keep it reusable for similar issues
+
+## Input
+{{ rca_content }}
+
+---
+
+## 1. Service Dependency Chain
+
+Extract the service call flow and locate key observability points.
+
+[Source: <quote>]
+Service Chain: A → B → C → Infra
+
+For each component:
+- Namespace / Pod pattern  
+- Log locations  
+- Metrics / Traces to check  
+- Upstream / Downstream dependencies  
+
+---
+
+## 2. Symptom Recognition
+
+Summarize what operators or systems can *observe* when this issue occurs.
+
+[Source: <quote>]
+Symptoms:
+- <user-visible symptom>
+- <system signal or metric>
+Detection clues:
+- <keywords or anomalies in logs / metrics>
+
+---
+
+## 3. Investigation Procedure
+
+Provide a guided chain-based investigation.  
+Each step should help locate the faulty segment, *without assuming the cause*.
+
+Step 1: Check entry service (A)
+- Commands: <kubectl / log query / trace lookup>
+- Expected: <normal output>
+- If anomaly found → proceed downstream to B  
+- Else → verify request reached B
+
+Step 2: Check middle layer (B)
+- Logs: <path / namespace>
+- Metrics: <latency / error rate>
+- If delay or errors → focus investigation here  
+- Else → move to C
+
+Step 3: Check downstream / infra
+- Verify resource state, connectivity, or queue status
+
