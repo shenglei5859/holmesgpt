@@ -5,7 +5,6 @@ generate_suffix() {
 }
 
 generate_time() {
-  # 2025-09-22 的时间范围
   hours=$((RANDOM % 24))
   minutes=$((RANDOM % 60))
   seconds=$((RANDOM % 60))
@@ -21,7 +20,6 @@ for i in $(seq 1 $COUNT); do
   TIME=$(generate_time)
   NAME="${BASE_UUID}-${SUFFIX}"
   
-  # 创建资源
   kubectl apply -f - <<EOF
 apiVersion: hana.sap.com/v1beta1
 kind: HanaSnapshot
@@ -39,7 +37,6 @@ spec:
     id: "hana-2.0-sp07"
 EOF
 
-  # 更新 status
   kubectl patch hanasnapshot ${NAME} -n ${NAMESPACE} --subresource=status --type=merge -p "{
     \"status\": {
       \"lastOperation\": {

@@ -12,6 +12,7 @@ from litellm.types.utils import ModelResponse, TextCompletionResponse
 import sentry_sdk
 from pydantic import BaseModel, ConfigDict, SecretStr
 from typing_extensions import Self
+from gen_ai_hub.proxy.native.openai import chat
 
 from holmes.clients.robusta_client import (
     RobustaModel,
@@ -525,6 +526,169 @@ class DefaultLLM(LLM):
                 logging.debug(
                     f"Added cache_control to {target_msg.get('role')} message (structured content)"
                 )
+
+
+class GenAIHubLLM(LLM):
+    """LLM implementation for SAP AI Core GenAI Hub."""
+
+    model: str
+    api_key: Optional[str]
+    args: Dict
+    tracer: Optional[Any]
+    model_config: Dict[str, Any]
+    context_length: int
+    provider: str
+    cost_config: List[Dict[str, str]]
+
+    def __init__(
+        self,
+        model: str,
+        api_key: Optional[str] = None,
+        args: Optional[Dict] = None,
+        tracer=None,
+    ):
+        self.model = model
+        # GenAI Hub specific model configurations
+        model_config = {
+            "d0ad7c1fe79bcb15": {
+                "model": "gpt-5",
+                "provider": "OpenAI",
+                "contextLength": 272000,
+                "cost": [{"inputCost": "0.00091"}, {"outputCost": "0.00677"}]
+            },
+            "d7798b66021df731": {
+                "model": "gpt-5-mini",
+                "provider": "OpenAI",
+                "contextLength": 272000,
+                "cost": [{"inputCost": "0.00024"}, {"outputCost": "0.00141"}]
+            },
+            "d02fb5127194087a": {
+                "model": "gpt-4o",
+                "provider": "OpenAI",
+                "contextLength": 128000,
+                "cost": [{"inputCost": "0.00159"}, {"outputCost": "0.00616"}]
+            }
+        }
+        self.api_key = api_key
+        self.args = args or {}
+        self.tracer = tracer
+
+        # Use GenAI Hub specific validation instead of DefaultLLM's
+        deploy_id = os.environ.get("DEPLOY_ID")
+        if deploy_id and deploy_id in model_config:
+            self.model_config = model_config[deploy_id]
+            self.model = self.model_config["model"]
+            self.context_length = self.model_config["contextLength"]
+            self.provider = self.model_config["provider"]
+            self.cost_config = self.model_config["cost"]
+        else:
+            raise ValueError(f"Invalid or missing DEPLOY_ID: {deploy_id}")
+
+        logging.info(f"Using GenAI Hub model {self.model} with context length {self.context_length}")
+        self.check_llm(self.model, self.api_key)
+
+    def check_llm(self, model: str, api_key: Optional[str]):
+        """GenAI Hub specific model validation"""
+        logging.debug(f"Pass LLM Check for GenAI Hub")
+        pass
+
+    def get_context_window_size(self) -> int:
+        return self.context_length
+
+    def get_maximum_output_token(self) -> int:
+        # Return a reasonable default based on context length
+        return min(16384, floor(self.context_length / 5))
+
+    def count_tokens(
+        self, messages: list[dict], tools: Optional[list[dict[str, Any]]] = None
+    ) -> TokenCountMetadata:
+        # Use litellm for token counting
+        total_tokens = 0
+        tools_tokens = 0
+        system_tokens = 0
+        assistant_tokens = 0
+        user_tokens = 0
+        other_tokens = 0
+        tools_to_call_tokens = 0
+
+        for message in messages:
+            token_count = litellm.token_counter(  # type: ignore
+                model=self.model, messages=[message]
+            )
+            message["token_count"] = token_count
+            role = message.get("role")
+            if role == "system":
+                system_tokens += token_count
+            elif role == "user":
+                user_tokens += token_count
+            elif role == "tool":
+                tools_tokens += token_count
+            elif role == "assistant":
+                assistant_tokens += token_count
+            else:
+                other_tokens += token_count
+
+        messages_token_count_without_tools = litellm.token_counter(  # type: ignore
+            model=self.model, messages=messages
+        )
+
+        total_tokens = litellm.token_counter(  # type: ignore
+            model=self.model,
+            messages=messages,
+            tools=tools,  # type: ignore
+        )
+        tools_to_call_tokens = max(0, total_tokens - messages_token_count_without_tools)
+
+        return TokenCountMetadata(
+            total_tokens=total_tokens,
+            system_tokens=system_tokens,
+            user_tokens=user_tokens,
+            tools_tokens=tools_tokens,
+            tools_to_call_tokens=tools_to_call_tokens,
+            other_tokens=other_tokens,
+            assistant_tokens=assistant_tokens,
+        )
+
+    def completion(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, dict]] = None,
+        response_format: Optional[Union[dict, Type[BaseModel]]] = None,
+        temperature: Optional[float] = None,
+        drop_params: Optional[bool] = None,
+        stream: Optional[bool] = None,
+    ) -> Union[ModelResponse, CustomStreamWrapper]:
+        kwargs = {"model": self.model, "messages": messages}
+
+        if tools and len(tools) > 0 and tool_choice == "auto":
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice
+
+        # Deprecated in GPT5 cause it is auto-switching
+        # if temperature is not None:
+        #     kwargs["temperature"] = temperature
+
+        if response_format:
+            kwargs["response_format"] = response_format
+
+        if stream is not None:
+            kwargs["stream"] = stream
+
+        # Disabled in GPT5, wait for openai to support it
+        # kwargs["max_completion_tokens"] = self.get_maximum_output_token()
+
+        # Merge additional args
+        kwargs.update(self.args)
+
+        # Use gen_ai_hub chat completions (OpenAI compatible)
+        result = chat.completions.create(**kwargs)
+        if isinstance(result, ModelResponse):
+            return result
+        elif isinstance(result, CustomStreamWrapper):
+            return result
+        else:
+            raise Exception(f"Unexpected type returned by the LLM {type(result)}")
 
 
 class LLMModelRegistry:
